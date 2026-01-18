@@ -6,7 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Removed
 
+
+- remove deprecated function bindings from llama_cpp.py (llama_cpp/llama_cpp.py) [via commit]
 ## [0.3.16]
 
 - feat: Update llama.cpp to ggerganov/llama.cpp@4227c9be4268ac844921b90f31595f81236bd317

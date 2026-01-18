@@ -65,6 +65,7 @@ class LlamaModel:
         self.model = model
         self.vocab = vocab
         self.sampler = None  # LlamaModel doesn't use samplers, but some cleanup code expects this attribute
+        self.custom_samplers = []
 
         def free_model():
             if self.model is None:
@@ -265,6 +266,7 @@ class LlamaContext:
         self.ctx = ctx
         self.memory = llama_cpp.llama_get_memory(self.ctx)
         self.sampler = None  # LlamaContext doesn't manage samplers directly, but some cleanup code expects this attribute
+        self.custom_samplers = []
 
         def free_ctx():
             if self.ctx is None:
@@ -450,6 +452,7 @@ class LlamaBatch:
 
         self.batch = batch
         self.sampler = None  # LlamaBatch doesn't use samplers, but some cleanup code expects this attribute
+        self.custom_samplers = []
 
         def free_batch():
             if self.batch is None:
@@ -520,6 +523,7 @@ class LlamaTokenDataArray:
         self.candidates_data.p[:] = self.default_candidates_data_p
         self.candidates.sorted = False
         self.candidates.size = self.n_vocab
+        self.sampler = None  # LlamaTokenDataArray doesn't use samplers, but some cleanup code expects this attribute
 
 
 # Embedding functions

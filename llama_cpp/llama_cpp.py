@@ -10,6 +10,7 @@ from typing import (
     NewType,
     Optional,
     TYPE_CHECKING,
+    List,
 )
 
 from llama_cpp._ctypes_extensions import (
@@ -425,6 +426,13 @@ LLAMA_FTYPE_MOSTLY_TQ2_0 = 37
 LLAMA_FTYPE_MOSTLY_MXFP4_MOE = 38
 LLAMA_FTYPE_GUESSED = 1024
 
+# enum llama_flash_attn_type {
+#     LLAMA_FLASH_ATTN_TYPE_DISABLED = 0,
+#     LLAMA_FLASH_ATTN_TYPE_AUTO     = 1,
+# };
+LLAMA_FLASH_ATTN_TYPE_DISABLED = 0
+LLAMA_FLASH_ATTN_TYPE_AUTO = 1
+
 # enum llama_rope_scaling_type {
 #     LLAMA_ROPE_SCALING_TYPE_UNSPECIFIED = -1,
 #     LLAMA_ROPE_SCALING_TYPE_NONE        = 0,
@@ -616,6 +624,23 @@ LLAMA_KV_OVERRIDE_TYPE_BOOL = 2
 LLAMA_KV_OVERRIDE_TYPE_STR = 3
 
 
+# struct llama_model_tensor_buft_override {
+#     const char * pattern;
+#     ggml_backend_buffer_type_t buft;
+# };
+class llama_model_tensor_buft_override(ctypes.Structure):
+    """Tensor buffer type override configuration
+    
+    Attributes:
+        pattern (bytes): Pattern to match tensor names
+        buft (ctypes.c_void_p): Buffer type to use for matching tensors
+    """
+    _fields_ = [
+        ("pattern", ctypes.c_char_p),
+        ("buft", ctypes.c_void_p),
+    ]
+
+
 # struct llama_model_kv_override {
 #     enum llama_model_kv_override_type tag;
 
@@ -718,7 +743,7 @@ class llama_model_params(ctypes.Structure):
 
     if TYPE_CHECKING:
         devices: CtypesArray[ctypes.c_void_p]  # NOTE: unused
-        tensor_buft_overrides: CtypesArray[llama_model_tensor_buft_override] # NOTE: unused
+        tensor_buft_overrides: CtypesArray[ctypes.c_void_p]  # NOTE: unused
         n_gpu_layers: int
         split_mode: int
         main_gpu: int
@@ -763,6 +788,7 @@ class llama_model_params(ctypes.Structure):
 #     enum llama_rope_scaling_type rope_scaling_type; // RoPE scaling type, from `enum llama_rope_scaling_type`
 #     enum llama_pooling_type      pooling_type;      // whether to pool (sum) embedding results by sequence id
 #     enum llama_attention_type    attention_type;    // attention type to use for embeddings
+#     enum llama_flash_attn_type   flash_attn_type;   // flash attention type
 
 #     // ref: https://github.com/ggml-org/llama.cpp/pull/2054
 #     float    rope_freq_base;   // RoPE base frequency, 0 = from model
@@ -798,6 +824,10 @@ class llama_model_params(ctypes.Structure):
 #     bool kv_unified;  // use a unified buffer across the input sequences when computing the attention
 #                       // try to disable when n_seq_max > 1 for improved performance when the sequences do not share a large prefix
 #                       // ref: https://github.com/ggml-org/llama.cpp/pull/14363
+
+#     // Backend samplers
+#     const struct llama_sampler_config * samplers;
+#     size_t n_samplers;
 # };
 class llama_context_params(ctypes.Structure):
     """Parameters for llama_context
@@ -812,6 +842,7 @@ class llama_context_params(ctypes.Structure):
         rope_scaling_type (int): RoPE scaling type, from `enum llama_rope_scaling_type`
         pooling_type (int): whether to pool (sum) embedding results by sequence id (ignored if no pooling layer)
         attention_type (int): attention type to use for embeddings
+        flash_attn_type (int): flash attention type, from `enum llama_flash_attn_type`
         rope_freq_base (float): RoPE base frequency, 0 = from model
         rope_freq_scale (float): RoPE frequency scaling factor, 0 = from model
         yarn_ext_factor (float): YaRN extrapolation mix factor, negative = from model
@@ -833,6 +864,8 @@ class llama_context_params(ctypes.Structure):
         op_offload (bool): offload host tensor operations to device
         swa_full (bool): use full-size SWA cache
         kv_unified (bool): use a unified buffer across the input sequences when computing the attention
+        samplers (ctypes.c_void_p): pointer to array of backend sampler configurations
+        n_samplers (int): number of backend samplers
     """
 
     if TYPE_CHECKING:
@@ -845,6 +878,7 @@ class llama_context_params(ctypes.Structure):
         rope_scaling_type: int
         pooling_type: int
         attention_type: int
+        flash_attn_type: int
         rope_freq_base: float
         rope_freq_scale: float
         yarn_ext_factor: float
@@ -866,6 +900,8 @@ class llama_context_params(ctypes.Structure):
         op_offload: bool
         swa_full: bool
         kv_unified: bool
+        samplers: ctypes.c_void_p
+        n_samplers: int
 
     _fields_ = [
         ("n_ctx", ctypes.c_uint32),
@@ -877,6 +913,7 @@ class llama_context_params(ctypes.Structure):
         ("rope_scaling_type", ctypes.c_int),
         ("pooling_type", ctypes.c_int),
         ("attention_type", ctypes.c_int),
+        ("flash_attn_type", ctypes.c_int),
         ("rope_freq_base", ctypes.c_float),
         ("rope_freq_scale", ctypes.c_float),
         ("yarn_ext_factor", ctypes.c_float),
@@ -898,6 +935,8 @@ class llama_context_params(ctypes.Structure):
         ("op_offload", ctypes.c_bool),
         ("swa_full", ctypes.c_bool),
         ("kv_unified", ctypes.c_bool),
+        ("samplers", ctypes.c_void_p),
+        ("n_samplers", ctypes.c_size_t),
     ]
 
 
@@ -1064,6 +1103,28 @@ def llama_model_default_params() -> llama_model_params:
 def llama_context_default_params() -> llama_context_params:
     """Get default parameters for llama_context"""
     ...
+
+
+# struct llama_sampler_config {
+#     llama_seq_id seq_id;
+#     llama_sampler * sampler;
+# };
+class llama_sampler_config(ctypes.Structure):
+    """Configuration for a backend sampler
+
+    Attributes:
+        seq_id (int): sequence ID this sampler applies to
+        sampler (llama_sampler_p): pointer to the sampler
+    """
+
+    _fields_ = [
+        ("seq_id", llama_seq_id),
+        ("sampler", ctypes.c_void_p),  # llama_sampler_p - defined after llama_sampler
+    ]
+
+    if TYPE_CHECKING:
+        seq_id: int
+        sampler: CtypesPointer[llama_sampler]
 
 
 # LLAMA_API struct llama_sampler_chain_params  llama_sampler_chain_default_params(void);
@@ -2568,6 +2629,17 @@ def llama_vocab_is_control(
     ...
 
 
+# LLAMA_API bool llama_token_is_eog(const struct llama_vocab * vocab, llama_token token);
+@ctypes_function(
+    "llama_token_is_eog", [llama_vocab_p_ctypes, llama_token], ctypes.c_bool
+)
+def llama_token_is_eog(
+    vocab: llama_vocab_p, token: Union[llama_token, int], /
+) -> bool:
+    """Check if the token is end-of-generation"""
+    ...
+
+
 # // Special tokens
 # LLAMA_API llama_token llama_vocab_bos(const struct llama_vocab * vocab); // beginning-of-sentence
 @ctypes_function("llama_vocab_bos", [llama_vocab_p_ctypes], llama_token)
@@ -2615,6 +2687,13 @@ def llama_vocab_pad(vocab: llama_vocab_p, /) -> llama_token:
 @ctypes_function("llama_vocab_mask", [llama_vocab_p_ctypes], llama_token)
 def llama_vocab_mask(vocab: llama_vocab_p, /) -> llama_token:
     """mask"""
+    ...
+
+
+# LLAMA_API llama_token llama_vocab_cls(const struct llama_vocab * vocab); // classifier
+@ctypes_function("llama_vocab_cls", [llama_vocab_p_ctypes], llama_token)
+def llama_vocab_cls(vocab: llama_vocab_p, /) -> llama_token:
+    """classifier token"""
     ...
 
 
@@ -2990,10 +3069,10 @@ class llama_sampler(ctypes.Structure):
     ]
 
 
+llama_sampler_p_ctypes = ctypes.POINTER(llama_sampler)
+
 if TYPE_CHECKING:
     llama_sampler_p = CtypesPointer[llama_sampler]
-
-llama_sampler_p_ctypes = ctypes.POINTER(llama_sampler)
 
 llama_sampler_i_name = ctypes.CFUNCTYPE(ctypes.c_char_p, llama_sampler_p_ctypes)
 llama_sampler_i_accept = ctypes.CFUNCTYPE(None, llama_sampler_p_ctypes, llama_token)
